@@ -10,7 +10,7 @@
 <AppBar>
 	<svelte:fragment slot="lead">
 		<a class="flex gap-1" href="/">
-			<Flame /> Enterprise
+			<Flame /> ONE
 		</a>
 	</svelte:fragment>
 
