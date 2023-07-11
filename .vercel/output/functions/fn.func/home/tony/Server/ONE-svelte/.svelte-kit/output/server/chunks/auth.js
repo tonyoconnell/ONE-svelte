@@ -343,7 +343,7 @@ const generateRandomString = (size, alphabet = DEFAULT_ALPHABET) => {
   }
   return id;
 };
-const generateHashWithScrypt = async (s) => {
+const generateScryptHash = async (s) => {
   const salt = generateRandomString(16);
   const key = await hashWithScrypt(s.normalize("NFKC"), salt);
   return `s2:${salt}:${key}`;
@@ -362,14 +362,16 @@ const validateScryptHash = async (s, hash) => {
   if (arr.length === 2) {
     const [salt2, key2] = arr;
     const targetKey = await hashWithScrypt(s, salt2, 8);
-    return constantTimeEqual(targetKey, key2);
+    const result = constantTimeEqual(targetKey, key2);
+    return result;
   }
   if (arr.length !== 3)
     return false;
   const [version, salt, key] = arr;
   if (version === "s2") {
     const targetKey = await hashWithScrypt(s, salt);
-    return constantTimeEqual(targetKey, key);
+    const result = constantTimeEqual(targetKey, key);
+    return result;
   }
   return false;
 };
@@ -448,116 +450,202 @@ const getOneTimeKeyExpiration = (duration) => {
     return null;
   return new Date(duration * 1e3 + (/* @__PURE__ */ new Date()).getTime());
 };
+const DEBUG_GLOBAL = "__lucia_debug_mode";
+const ESCAPE = "\x1B";
+const DEFAULT_TEXT_FORMAT = "\x1B[0m";
+const DEFAULT_FG_BG = `${ESCAPE}[0m`;
+const RED_CODE = 9;
+const LUCIA_COLOR_CODE = 63;
+const WHITE_CODE = 231;
+const GREEN_CODE = 34;
+const CYAN_CODE = 6;
+const YELLOW_CODE = 3;
+const PURPLE_CODE = 5;
+const BLUE_CODE = 4;
+const globalContext = globalThis;
+const format = (text, format2, removeFormat) => {
+  return `${format2}${text}${removeFormat ? removeFormat : DEFAULT_TEXT_FORMAT}`;
+};
+const bgFormat = (text, colorCode) => {
+  return format(text, `${ESCAPE}[48;5;${colorCode}m`, DEFAULT_FG_BG);
+};
+const fgFormat = (text, colorCode) => {
+  return format(text, `${ESCAPE}[38;5;${colorCode}m`, DEFAULT_FG_BG);
+};
+const bg = {
+  lucia: (text) => bgFormat(text, LUCIA_COLOR_CODE),
+  red: (text) => bgFormat(text, RED_CODE),
+  white: (text) => bgFormat(text, WHITE_CODE),
+  green: (text) => bgFormat(text, GREEN_CODE),
+  cyan: (text) => bgFormat(text, CYAN_CODE),
+  yellow: (text) => bgFormat(text, YELLOW_CODE),
+  purple: (text) => bgFormat(text, PURPLE_CODE),
+  blue: (text) => bgFormat(text, BLUE_CODE)
+};
+const fg = {
+  lucia: (text) => fgFormat(text, LUCIA_COLOR_CODE),
+  red: (text) => fgFormat(text, RED_CODE),
+  white: (text) => fgFormat(text, WHITE_CODE),
+  green: (text) => fgFormat(text, GREEN_CODE),
+  cyan: (text) => fgFormat(text, CYAN_CODE),
+  yellow: (text) => fgFormat(text, YELLOW_CODE),
+  purple: (text) => fgFormat(text, PURPLE_CODE),
+  blue: (text) => fgFormat(text, BLUE_CODE),
+  default: (text) => format(text, DEFAULT_TEXT_FORMAT)
+};
+const bold = (text) => format(text, `${ESCAPE}[1m`, `${ESCAPE}[22m`);
+const dim = (text) => format(text, `${ESCAPE}[2m`, `${ESCAPE}[22m`);
+const isDebugModeEnabled = () => {
+  return Boolean(globalContext[DEBUG_GLOBAL]);
+};
+const linebreak = () => console.log("");
+const createCategory = (name, themeTextColor) => {
+  const createLogger = (textColor = fg.default) => {
+    return (text, subtext) => {
+      if (!isDebugModeEnabled())
+        return;
+      if (subtext) {
+        return log(themeTextColor(`[${name}]`), `${textColor(text)}`, subtext);
+      }
+      log(themeTextColor(`[${name}]`), `${textColor(text)}`);
+    };
+  };
+  return {
+    info: createLogger(),
+    notice: createLogger(fg.yellow),
+    fail: createLogger(fg.red),
+    success: createLogger(fg.green)
+  };
+};
+const enableDebugMode = () => {
+  globalContext[DEBUG_GLOBAL] = true;
+};
+const disableDebugMode = () => {
+  globalContext[DEBUG_GLOBAL] = false;
+};
+const debug = {
+  init: (debugEnabled) => {
+    if (debugEnabled) {
+      enableDebugMode();
+      linebreak();
+      console.log(` ${bg.lucia(bold(fg.white(" lucia ")))}  ${fg.lucia(bold("Debug mode enabled"))}`);
+    } else {
+      disableDebugMode();
+    }
+  },
+  request: {
+    init: (method, href) => {
+      if (!isDebugModeEnabled())
+        return;
+      linebreak();
+      const getUrl = () => {
+        try {
+          const url = new URL(href);
+          return url.origin + url.pathname;
+        } catch {
+          return href;
+        }
+      };
+      log(bg.cyan(bold(fg.white(" request "))), fg.cyan(`${method.toUpperCase()} ${getUrl()}`));
+    },
+    ...createCategory("request", fg.cyan)
+  },
+  session: createCategory("session", fg.purple),
+  key: createCategory("key", fg.blue)
+};
+const log = (type, text, subtext) => {
+  if (!subtext) {
+    return console.log(`${dim((/* @__PURE__ */ new Date()).toLocaleTimeString())}  ${type} ${text}`);
+  }
+  console.log(`${dim((/* @__PURE__ */ new Date()).toLocaleTimeString())}  ${type} ${text} ${dim(subtext)}`);
+};
 class AuthRequest {
   auth;
   context;
   constructor(auth2, context) {
     this.auth = auth2;
     this.context = context;
+    try {
+      this.storedSessionId = auth2.parseRequestHeaders(context.request);
+    } catch (e) {
+      this.storedSessionId = null;
+    }
   }
   validatePromise = null;
   validateUserPromise = null;
-  currentSession;
+  storedSessionId;
   setSession = (session) => {
-    const storedSession = this.currentSession;
-    const storedSessionId = storedSession?.sessionId ?? null;
-    const newSessionId = session?.sessionId ?? null;
-    if (storedSession !== void 0 && storedSessionId === newSessionId)
+    const sessionId = session?.sessionId ?? null;
+    if (this.storedSessionId === sessionId)
       return;
-    this.currentSession = session;
     this.validateUserPromise = null;
+    this.validatePromise = null;
+    this.setSessionCookie(session);
+  };
+  setSessionCookie = (session) => {
+    const sessionId = session?.sessionId ?? null;
+    if (this.storedSessionId === sessionId)
+      return;
+    this.storedSessionId = sessionId;
     try {
       this.context.setCookie(this.auth.createSessionCookie(session));
-    } catch {
+      if (session) {
+        debug.request.notice("Session cookie stored", session.sessionId);
+      } else {
+        debug.request.notice("Session cookie deleted");
+      }
+    } catch (e) {
     }
   };
   validate = async () => {
-    if (this.currentSession !== void 0)
-      return this.currentSession;
-    if (this.validatePromise)
+    if (this.validatePromise) {
+      debug.request.info("Using cached result for session validation");
       return this.validatePromise;
-    if (this.validateUserPromise) {
-      const { session } = await this.validateUserPromise;
-      return session;
     }
     this.validatePromise = new Promise(async (resolve) => {
+      if (!this.storedSessionId) {
+        return resolve(null);
+      }
       try {
-        const sessionId = this.auth.parseRequestHeaders(this.context.request);
-        if (!sessionId) {
-          this.setSession(null);
-          return resolve(null);
+        const session = await this.auth.validateSession(this.storedSessionId);
+        if (session.fresh) {
+          this.setSessionCookie(session);
         }
-        const session = await this.auth.validateSession(sessionId);
-        this.setSession(session);
         return resolve(session);
-      } catch {
-        this.setSession(null);
+      } catch (e) {
+        this.setSessionCookie(null);
         return resolve(null);
       }
     });
     return this.validatePromise;
   };
   validateUser = async () => {
-    const currentSession = this.currentSession;
-    if (currentSession === null) {
-      return {
-        session: null,
-        user: null
-      };
-    }
     const resolveNullSession = (resolve) => {
-      this.setSession(null);
+      this.setSessionCookie(null);
       return resolve({
         user: null,
         session: null
       });
     };
-    if (currentSession !== void 0) {
-      this.validateUserPromise = new Promise(async (resolve) => {
-        try {
-          const user = await this.auth.getUser(currentSession.userId);
-          return resolve({ user, session: currentSession });
-        } catch {
-          return resolveNullSession(resolve);
-        }
-      });
-      return this.validateUserPromise;
-    }
-    if (this.validateUserPromise)
-      return this.validateUserPromise;
-    if (this.validatePromise) {
-      this.validateUserPromise = new Promise(async (resolve) => {
-        const session = await this.validatePromise;
-        if (!session)
-          return resolveNullSession(resolve);
-        try {
-          const user = await this.auth.getUser(session.userId);
-          return resolve({ user, session });
-        } catch {
-          return resolveNullSession(resolve);
-        }
-      });
+    if (this.validateUserPromise) {
+      debug.request.info("Using cached result for session validation");
       return this.validateUserPromise;
     }
     this.validateUserPromise = new Promise(async (resolve) => {
+      if (!this.storedSessionId) {
+        return resolveNullSession(resolve);
+      }
       try {
-        const sessionId = this.auth.parseRequestHeaders(this.context.request);
-        if (!sessionId)
-          return resolveNullSession(resolve);
-        const { session, user } = await this.auth.validateSessionUser(sessionId);
-        this.setSession(session);
+        const { session, user } = await this.auth.validateSessionUser(this.storedSessionId);
+        if (session.fresh) {
+          this.setSessionCookie(session);
+        }
         return resolve({ session, user });
-      } catch {
+      } catch (e) {
         return resolveNullSession(resolve);
       }
     });
     return this.validateUserPromise;
-  };
-  getCookie = () => {
-    const currentSession = this.currentSession;
-    if (currentSession === void 0)
-      return null;
-    return this.auth.createSessionCookie(currentSession);
   };
 }
 const lucia$1 = (config) => {
@@ -581,6 +669,7 @@ class Auth {
   middleware;
   csrfProtection;
   origin;
+  experimental;
   constructor(config) {
     validateConfiguration(config);
     const defaultSessionCookieOption = {
@@ -624,11 +713,15 @@ class Auth {
     };
     this.sessionCookieOption = config.sessionCookie ?? defaultSessionCookieOption;
     this.hash = {
-      generate: config.hash?.generate ?? generateHashWithScrypt,
+      generate: config.hash?.generate ?? generateScryptHash,
       validate: config.hash?.validate ?? validateScryptHash
     };
     this.middleware = config.middleware ?? lucia();
     this.origin = config.origin ?? [];
+    this.experimental = {
+      debugMode: config.experimental?.debugMode ?? false
+    };
+    debug.init(this.experimental.debugMode);
   }
   _transformDatabaseUser;
   transformDatabaseUser = (databaseUser) => {
@@ -636,37 +729,47 @@ class Auth {
   };
   getUser = async (userId) => {
     const databaseUser = await this.adapter.getUser(userId);
-    if (!databaseUser)
+    if (!databaseUser) {
       throw new LuciaError("AUTH_INVALID_USER_ID");
+    }
     const user = this.transformDatabaseUser(databaseUser);
     return user;
   };
   getSessionUser = async (sessionId) => {
-    if (sessionId.length !== 40)
+    if (sessionId.length !== 40) {
+      debug.session.fail("Expected id length to be 40", sessionId);
       throw new LuciaError("AUTH_INVALID_SESSION_ID");
+    }
     let databaseUser;
-    let sessionData;
+    let databaseSession;
     if (this.adapter.getSessionAndUserBySessionId !== void 0) {
       const databaseUserSession = await this.adapter.getSessionAndUserBySessionId(sessionId);
-      if (!databaseUserSession)
+      if (!databaseUserSession) {
+        debug.session.fail("Session not found", sessionId);
         throw new LuciaError("AUTH_INVALID_SESSION_ID");
+      }
       databaseUser = databaseUserSession.user;
-      sessionData = databaseUserSession.session;
+      databaseSession = databaseUserSession.session;
     } else {
-      sessionData = await this.adapter.getSession(sessionId);
-      databaseUser = sessionData ? await this.adapter.getUser(sessionData.user_id) : null;
+      databaseSession = await this.adapter.getSession(sessionId);
+      if (!databaseSession) {
+        debug.session.fail("Session not found", sessionId);
+        throw new LuciaError("AUTH_INVALID_SESSION_ID");
+      }
+      databaseUser = await this.adapter.getUser(databaseSession.user_id);
+      if (!databaseUser) {
+        debug.session.fail("User not found", databaseSession.user_id);
+        throw new LuciaError("AUTH_INVALID_SESSION_ID");
+      }
     }
-    if (!sessionData)
-      throw new LuciaError("AUTH_INVALID_SESSION_ID");
-    const session = validateDatabaseSession(sessionData);
+    const session = validateDatabaseSession(databaseSession);
     if (!session) {
+      debug.session.fail(`Session expired at ${new Date(Number(databaseSession.idle_expires))}`, sessionId);
       if (this.autoDatabaseCleanup) {
         await this.adapter.deleteSession(sessionId);
       }
       throw new LuciaError("AUTH_INVALID_SESSION_ID");
     }
-    if (!databaseUser)
-      throw new LuciaError("AUTH_INVALID_USER_ID");
     return {
       user: this.transformDatabaseUser(databaseUser),
       session
@@ -722,28 +825,43 @@ class Auth {
       return await this.hash.validate(password, data.hashed_password);
     };
     const databaseKeyData = await this.adapter.getKey(keyId, shouldDataBeDeleted);
-    if (!databaseKeyData)
+    if (!databaseKeyData) {
+      debug.key.fail("Key not found", keyId);
       throw new LuciaError("AUTH_INVALID_KEY_ID");
+    }
     try {
       const singleUse = !!databaseKeyData.expires;
       const hashedPassword = databaseKeyData.hashed_password;
       if (hashedPassword) {
-        if (!password)
+        debug.key.info("Key includes password");
+        if (!password) {
+          debug.key.fail("Key password not provided", keyId);
           throw new LuciaError("AUTH_INVALID_PASSWORD");
-        if (!hashedPassword)
-          throw new LuciaError("AUTH_INVALID_PASSWORD");
-        if (hashedPassword.startsWith("$2a"))
+        }
+        if (hashedPassword.startsWith("$2a")) {
           throw new LuciaError("AUTH_OUTDATED_PASSWORD");
+        }
         const validPassword = await this.hash.validate(password, hashedPassword);
-        if (!validPassword)
+        if (!validPassword) {
+          debug.key.fail("Incorrect key password", password);
           throw new LuciaError("AUTH_INVALID_PASSWORD");
+        }
+        debug.key.notice("Validated key password");
+      } else {
+        debug.key.info("No password included in key");
       }
       if (singleUse) {
+        debug.key.info("Key type: single-use");
         const withinExpiration = isWithinExpiration(databaseKeyData.expires);
-        if (!withinExpiration)
+        if (!withinExpiration) {
+          debug.key.fail(`Key expired at ${new Date(databaseKeyData.expires).toLocaleDateString()}`, keyId);
           throw new LuciaError("AUTH_EXPIRED_KEY");
+        }
         await this.adapter.deleteNonPrimaryKey(databaseKeyData.id);
+      } else {
+        debug.key.info("Key type: persistent");
       }
+      debug.key.success("Validated key", keyId);
       const key = transformDatabaseKey(databaseKeyData);
       return key;
     } catch (e) {
@@ -754,13 +872,18 @@ class Auth {
     }
   };
   getSession = async (sessionId) => {
-    if (sessionId.length !== 40)
+    if (sessionId.length !== 40) {
+      debug.session.fail("Expected id length to be 40", sessionId);
       throw new LuciaError("AUTH_INVALID_SESSION_ID");
+    }
     const databaseSession = await this.adapter.getSession(sessionId);
-    if (!databaseSession)
+    if (!databaseSession) {
+      debug.session.fail("Session not found", sessionId);
       throw new LuciaError("AUTH_INVALID_SESSION_ID");
+    }
     const session = validateDatabaseSession(databaseSession);
     if (!session) {
+      debug.session.fail(`Session expired at ${new Date(Number(databaseSession.idle_expires))}`, sessionId);
       if (this.autoDatabaseCleanup) {
         await this.adapter.deleteSession(sessionId);
       }
@@ -786,15 +909,19 @@ class Auth {
   };
   validateSession = async (sessionId) => {
     const session = await this.getSession(sessionId);
-    if (session.state === "active")
+    if (session.state === "active") {
+      debug.session.success("Validated session", session.sessionId);
       return session;
+    }
     const renewedSession = await this.renewSession(sessionId);
     return renewedSession;
   };
   validateSessionUser = async (sessionId) => {
     const { session, user } = await this.getSessionUser(sessionId);
-    if (session.state === "active")
+    if (session.state === "active") {
+      debug.session.success("Validated session", session.sessionId);
       return { session, user };
+    }
     const renewedSession = await this.renewSession(sessionId);
     return {
       session: renewedSession,
@@ -828,13 +955,18 @@ class Auth {
     };
   };
   renewSession = async (sessionId) => {
-    if (sessionId.length !== 40)
+    if (sessionId.length !== 40) {
+      debug.session.fail("Expected id length to be 40", sessionId);
       throw new LuciaError("AUTH_INVALID_SESSION_ID");
+    }
     const databaseSession = await this.adapter.getSession(sessionId);
-    if (!databaseSession)
+    if (!databaseSession) {
+      debug.session.fail("Session not found", sessionId);
       throw new LuciaError("AUTH_INVALID_SESSION_ID");
+    }
     const session = validateDatabaseSession(databaseSession);
     if (!session) {
+      debug.session.fail(`Session expired at ${new Date(Number(databaseSession.idle_expires)).toLocaleDateString()}`, sessionId);
       if (this.autoDatabaseCleanup) {
         await this.adapter.deleteSession(sessionId);
       }
@@ -844,10 +976,12 @@ class Auth {
       await this.createSession(session.userId),
       this.autoDatabaseCleanup ? await this.deleteDeadUserSessions(session.userId) : null
     ]);
+    debug.session.success("Session renewed", renewedSession.sessionId);
     return renewedSession;
   };
   invalidateSession = async (sessionId) => {
     await this.adapter.deleteSession(sessionId);
+    debug.session.notice("Invalidated session", sessionId);
   };
   invalidateAllUserSessions = async (userId) => {
     await this.adapter.deleteSessionsByUserId(userId);
@@ -864,22 +998,42 @@ class Auth {
     }));
   };
   parseRequestHeaders = (request) => {
+    debug.request.init(request.method ?? "<method>", request.url ?? "<url>");
+    if (request.method === null) {
+      debug.request.fail("Request method unavailable");
+      throw new LuciaError("AUTH_INVALID_REQUEST");
+    }
+    if (request.url === null) {
+      debug.request.fail("Request url unavailable");
+      throw new LuciaError("AUTH_INVALID_REQUEST");
+    }
     const cookies = parseCookie(request.headers.cookie ?? "");
     const sessionId = cookies[SESSION_COOKIE_NAME] ?? null;
-    if (request.method === null || request.url === null)
-      throw new LuciaError("AUTH_INVALID_REQUEST");
+    if (sessionId) {
+      debug.request.info("Found session cookie", sessionId);
+    } else {
+      debug.request.info("No session cookie found");
+    }
     const csrfCheck = request.method.toUpperCase() !== "GET" && request.method.toUpperCase() !== "HEAD";
     if (csrfCheck && this.csrfProtection) {
       const requestOrigin = request.headers.origin;
-      if (!requestOrigin)
-        throw new LuciaError("AUTH_INVALID_REQUEST");
-      try {
-        const url = new URL(request.url);
-        if (![url.origin, ...this.origin].includes(requestOrigin))
-          throw new LuciaError("AUTH_INVALID_REQUEST");
-      } catch {
+      if (!requestOrigin) {
+        debug.request.fail("No request origin available");
         throw new LuciaError("AUTH_INVALID_REQUEST");
       }
+      try {
+        const url = new URL(request.url);
+        if (![url.origin, ...this.origin].includes(requestOrigin)) {
+          debug.request.fail("Invalid request origin", requestOrigin);
+          throw new LuciaError("AUTH_INVALID_REQUEST");
+        }
+        debug.request.info("Valid request origin", requestOrigin);
+      } catch {
+        debug.request.fail("Invalid origin string", requestOrigin);
+        throw new LuciaError("AUTH_INVALID_REQUEST");
+      }
+    } else {
+      debug.request.notice("Skipping CSRF check");
     }
     return sessionId;
   };
@@ -914,8 +1068,9 @@ class Auth {
       };
     }
     const expiresAt = getOneTimeKeyExpiration(keyData.expiresIn);
-    if (!expiresAt)
-      throw new TypeError();
+    if (expiresAt == null) {
+      throw new LuciaError("UNKNOWN_ERROR");
+    }
     await this.adapter.setKey({
       id: keyId,
       user_id: userId,
@@ -941,15 +1096,16 @@ class Auth {
     const keyId = `${providerId}:${providerUserId}`;
     const shouldDataBeDeleted = async () => false;
     const databaseKey = await this.adapter.getKey(keyId, shouldDataBeDeleted);
-    if (!databaseKey)
+    if (!databaseKey) {
       throw new LuciaError("AUTH_INVALID_KEY_ID");
+    }
     const key = transformDatabaseKey(databaseKey);
     return key;
   };
   getAllUserKeys = async (userId) => {
     await this.getUser(userId);
-    const databaseData = await this.adapter.getKeysByUserId(userId);
-    return databaseData.map((val) => transformDatabaseKey(val));
+    const databaseKeys = await this.adapter.getKeysByUserId(userId);
+    return databaseKeys.map((dbKey) => transformDatabaseKey(dbKey));
   };
   updateKeyPassword = async (providerId, providerUserId, password) => {
     const keyId = `${providerId}:${providerUserId}`;

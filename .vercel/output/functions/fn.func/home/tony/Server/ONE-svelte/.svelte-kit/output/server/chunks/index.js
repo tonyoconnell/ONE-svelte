@@ -1,4 +1,4 @@
-let HttpError = class HttpError2 {
+class HttpError {
   /**
    * @param {number} status
    * @param {{message: string} extends App.Error ? (App.Error | string | undefined) : App.Error} body
@@ -16,8 +16,8 @@ let HttpError = class HttpError2 {
   toString() {
     return JSON.stringify(this.body);
   }
-};
-let Redirect = class Redirect2 {
+}
+class Redirect {
   /**
    * @param {300 | 301 | 302 | 303 | 304 | 305 | 306 | 307 | 308} status
    * @param {string} location
@@ -26,8 +26,8 @@ let Redirect = class Redirect2 {
     this.status = status;
     this.location = location;
   }
-};
-let ActionFailure = class ActionFailure2 {
+}
+class ActionFailure {
   /**
    * @param {number} status
    * @param {T} [data]
@@ -36,12 +36,12 @@ let ActionFailure = class ActionFailure2 {
     this.status = status;
     this.data = data;
   }
-};
-function error(status, message) {
+}
+function error(status, body) {
   if (isNaN(status) || status < 400 || status > 599) {
     throw new Error(`HTTP error status codes must be between 400 and 599 — ${status} is invalid`);
   }
-  return new HttpError(status, message);
+  return new HttpError(status, body);
 }
 function redirect(status, location) {
   if (isNaN(status) || status < 300 || status > 308) {
@@ -67,7 +67,12 @@ const encoder = new TextEncoder();
 function text(body, init) {
   const headers = new Headers(init?.headers);
   if (!headers.has("content-length")) {
-    headers.set("content-length", encoder.encode(body).byteLength.toString());
+    const encoded = encoder.encode(body);
+    headers.set("content-length", encoded.byteLength.toString());
+    return new Response(encoded, {
+      ...init,
+      headers
+    });
   }
   return new Response(body, {
     ...init,

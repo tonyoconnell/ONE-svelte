@@ -160,7 +160,7 @@ const LightSwitch = create_ssr_component(($$result, $$props, $$bindings, slots) 
   classesThumb = `${cThumb} ${cTransition} ${height} ${rounded} ${thumbBg} ${thumbPosition}`;
   classesIcon = `${cIcon} ${iconFill}`;
   $$unsubscribe_modeCurrent();
-  return `${$$result.head += `<!-- HEAD_svelte-qwgpj2_START --><!-- HTML_TAG_START -->${`<script nonce="%sveltekit.nonce%">(${setInitialClassState.toString()})();<\/script>`}<!-- HTML_TAG_END --><!-- HEAD_svelte-qwgpj2_END -->`, ""}
+  return `${$$result.head += `<!-- HEAD_svelte-gewkj4_START --><!-- HTML_TAG_START -->${`<script nonce="%sveltekit.nonce%">(${setInitialClassState.toString()})();<\/script>`}<!-- HTML_TAG_END --><!-- HEAD_svelte-gewkj4_END -->`, ""}
 
 <div class="${"lightswitch-track " + escape(classesTrack, true)}" role="switch" aria-label="Light Switch"${add_attribute("aria-checked", $modeCurrent, 0)} title="${"Toggle " + escape($modeCurrent === true ? "Dark" : "Light", true) + " Mode"}" tabindex="0">
 	<div class="${"lightswitch-thumb " + escape(classesThumb, true)}">

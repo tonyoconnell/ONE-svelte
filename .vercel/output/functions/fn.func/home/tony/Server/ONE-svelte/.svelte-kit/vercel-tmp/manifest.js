@@ -1,21 +1,27 @@
-export const manifest = {
+export const manifest = (() => {
+function __memo(fn) {
+	let value;
+	return () => value ??= (value = fn());
+}
+
+return {
 	appDir: "_app",
 	appPath: "_app",
 	assets: new Set(["favicon.png"]),
 	mimeTypes: {".png":"image/png"},
 	_: {
-		client: {"start":"_app/immutable/entry/start.704faa50.js","app":"_app/immutable/entry/app.612e3d1a.js","imports":["_app/immutable/entry/start.704faa50.js","_app/immutable/chunks/index.e5838562.js","_app/immutable/chunks/singletons.fa4d4adc.js","_app/immutable/chunks/parse.7d180a0f.js","_app/immutable/entry/app.612e3d1a.js","_app/immutable/chunks/index.e5838562.js"],"stylesheets":[],"fonts":[]},
+		client: {"start":"_app/immutable/entry/start.18b97255.js","app":"_app/immutable/entry/app.a28f7dc0.js","imports":["_app/immutable/entry/start.18b97255.js","_app/immutable/chunks/index.0c8a5be0.js","_app/immutable/chunks/singletons.aed9d15b.js","_app/immutable/chunks/parse.7d180a0f.js","_app/immutable/entry/app.a28f7dc0.js","_app/immutable/chunks/index.0c8a5be0.js"],"stylesheets":[],"fonts":[]},
 		nodes: [
-			() => import('../output/server/nodes/0.js'),
-			() => import('../output/server/nodes/1.js'),
-			() => import('../output/server/nodes/2.js'),
-			() => import('../output/server/nodes/3.js'),
-			() => import('../output/server/nodes/4.js'),
-			() => import('../output/server/nodes/5.js'),
-			() => import('../output/server/nodes/6.js'),
-			() => import('../output/server/nodes/7.js'),
-			() => import('../output/server/nodes/8.js'),
-			() => import('../output/server/nodes/9.js')
+			__memo(() => import('../output/server/nodes/0.js')),
+			__memo(() => import('../output/server/nodes/1.js')),
+			__memo(() => import('../output/server/nodes/2.js')),
+			__memo(() => import('../output/server/nodes/3.js')),
+			__memo(() => import('../output/server/nodes/4.js')),
+			__memo(() => import('../output/server/nodes/5.js')),
+			__memo(() => import('../output/server/nodes/6.js')),
+			__memo(() => import('../output/server/nodes/7.js')),
+			__memo(() => import('../output/server/nodes/8.js')),
+			__memo(() => import('../output/server/nodes/9.js'))
 		],
 		routes: [
 			{
@@ -79,7 +85,7 @@ export const manifest = {
 				pattern: /^\/stripe\/webhook\/?$/,
 				params: [],
 				page: null,
-				endpoint: () => import('../output/server/entries/endpoints/(payment)/stripe/webhook/_server.ts.js')
+				endpoint: __memo(() => import('../output/server/entries/endpoints/(payment)/stripe/webhook/_server.ts.js'))
 			}
 		],
 		matchers: async () => {
@@ -87,4 +93,5 @@ export const manifest = {
 			return {  };
 		}
 	}
-};
+}
+})();

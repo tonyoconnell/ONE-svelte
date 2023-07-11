@@ -46,6 +46,7 @@
 	},
 	"dependencies": {
 		"@lucia-auth/adapter-prisma": "^2.0.0",
+		"@sveltejs/kit": "^1.22.2",
 		"@popperjs/core": "^2.11.8",
 		"@prisma/client": "^4.16.2",
 		"flowbite": "^1.7.0",

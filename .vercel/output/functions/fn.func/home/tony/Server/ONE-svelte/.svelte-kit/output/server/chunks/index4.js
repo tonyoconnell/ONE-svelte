@@ -25,7 +25,11 @@ function client_method(key) {
   }
 }
 const invalidateAll = /* @__PURE__ */ client_method("invalidate_all");
-const applyAction = client_method("apply_action");
+function applyAction(result) {
+  {
+    throw new Error("Cannot call applyAction(...) on the server");
+  }
+}
 function deserialize(result) {
   const parsed = JSON.parse(result);
   if (parsed.data) {
@@ -49,10 +53,16 @@ function enhance(form_element, submit = () => {
       await invalidateAll();
     }
     if (location.origin + location.pathname === action.origin + action.pathname || result.type === "redirect" || result.type === "error") {
-      applyAction(result);
+      applyAction();
     }
   };
   async function handle_submit(event) {
+    const method = event.submitter?.hasAttribute("formmethod") ? (
+      /** @type {HTMLButtonElement | HTMLInputElement} */
+      event.submitter.formMethod
+    ) : clone(form_element).method;
+    if (method !== "post")
+      return;
     event.preventDefault();
     const action = new URL(
       // We can't do submitter.formAction directly because that property is always set
@@ -212,7 +222,10 @@ const defaultFormOptions = {
 };
 function superForm(form, options = {}) {
   {
-    options = { ...defaultFormOptions, ...options };
+    options = {
+      ...defaultFormOptions,
+      ...options
+    };
     if (typeof form === "string" && typeof options.id === "string") {
       throw new SuperFormError("You cannot specify an id both in the first superForm argument and in the options.");
     }
@@ -309,19 +322,6 @@ function superForm(form, options = {}) {
     }
   }
   async function Form_updateFromValidation(form3, untaint) {
-    let cancelled = false;
-    const data = {
-      form: form3,
-      cancel: () => cancelled = true
-    };
-    for (const event of formEvents.onUpdate) {
-      await event(data);
-    }
-    if (cancelled) {
-      if (options.flashMessage)
-        cancelFlash(options);
-      return;
-    }
     if (form3.valid && options.resetForm && (options.resetForm === true || await options.resetForm())) {
       Form_reset(form3.message);
     } else {
@@ -374,18 +374,10 @@ function superForm(form, options = {}) {
      * To work with client-side validation, errors cannot be deleted but must
      * be set to undefined, to know where they existed before (tainted+error check in oninput)
      */
-    clear: (undefinePath) => {
-      _errors.update(($errors) => {
-        traversePaths($errors, (pathData) => {
-          if (Array.isArray(pathData.value)) {
-            return pathData.set(void 0);
-          }
-        });
-        if (undefinePath)
-          setPaths($errors, [undefinePath], void 0);
-        return $errors;
-      });
-    }
+    clear: () => clearErrors(_errors, {
+      undefinePath: null,
+      clearFormLevelErrors: true
+    })
   };
   const Tainted = writable();
   function Tainted__validate(path, taint) {
@@ -542,7 +534,7 @@ function superForm(form, options = {}) {
         if (events.onUpdated)
           formEvents.onUpdated.push(events.onUpdated);
       }
-      return formEnhance(el, Submitting, Delayed, Timeout, Errors, Form_updateFromActionResult, options, Form, Message, Context_enableTaintedMessage, formEvents, FormId, Meta, Constraints, Tainted, LastChanges);
+      return formEnhance(el, Submitting, Delayed, Timeout, Errors, Form_updateFromActionResult, options, Form, Message, Context_enableTaintedMessage, formEvents, FormId, Meta, Constraints, Tainted, LastChanges, Context_findValidationForms);
     },
     firstError: FirstError,
     allErrors: AllErrors,
@@ -560,6 +552,21 @@ function shouldSyncFlash(options) {
   if (!options.flashMessage || !browser)
     return false;
   return options.syncFlashMessage;
+}
+function clearErrors(Errors, options) {
+  Errors.update(($errors) => {
+    traversePaths($errors, (pathData) => {
+      if (pathData.path.length == 1 && pathData.path[0] == "_errors" && !options.clearFormLevelErrors) {
+        return;
+      }
+      if (Array.isArray(pathData.value)) {
+        return pathData.set(void 0);
+      }
+    });
+    if (options.undefinePath)
+      setPaths($errors, [options.undefinePath], void 0);
+    return $errors;
+  });
 }
 const effectMapCache = /* @__PURE__ */ new WeakMap();
 async function validateField(path, validators, defaultValidator, data, Errors, tainted, options = {}) {
@@ -609,8 +616,8 @@ async function validateField(path, validators, defaultValidator, data, Errors, t
   function Errors_get() {
     return get_store_value(Errors);
   }
-  function Errors_clear(undefinePath) {
-    Errors.clear(undefinePath);
+  function Errors_clear(options2) {
+    return clearErrors(Errors, options2);
   }
   function Errors_set(newErrors) {
     Errors.set(newErrors);
@@ -704,7 +711,7 @@ async function validateField(path, validators, defaultValidator, data, Errors, t
       const current = traversePath(newErrors, path);
       return Errors_update(options.errors ?? current?.value);
     } else {
-      Errors_clear(path);
+      Errors_clear({ undefinePath: path, clearFormLevelErrors: false });
       return void 0;
     }
   } else {
@@ -719,7 +726,7 @@ async function validateField(path, validators, defaultValidator, data, Errors, t
     }
   }
 }
-function formEnhance(formEl, submitting, delayed, timeout, errs, Data_update, options, data, message, enableTaintedForm, formEvents, id, meta, constraints, tainted, lastChanges) {
+function formEnhance(formEl, submitting, delayed, timeout, errs, Data_update, options, data, message, enableTaintedForm, formEvents, id, meta, constraints, tainted, lastChanges, Context_findValidationForms) {
   enableTaintedForm();
   const errors = errs;
   function validateChange(change) {
@@ -1030,47 +1037,67 @@ function formEnhance(formEl, submitting, delayed, timeout, errs, Data_update, op
         await event2(data2);
       }
       if (!cancelled2) {
-        if (result.type !== "error") {
-          if (result.type === "success" && options.invalidateAll) {
-            await invalidateAll();
+        if ((result.type === "success" || result.type == "failure") && result.data) {
+          const forms = Context_findValidationForms(result.data);
+          if (!forms.length) {
+            throw new SuperFormError("No form data returned from ActionResult. Make sure you return { form } in the form actions.");
           }
-          if (options.applyAction) {
-            await applyAction(result);
-          } else {
-            await Data_update(result);
+          for (const newForm of forms) {
+            if (newForm.id !== get_store_value(id))
+              continue;
+            const data3 = {
+              form: newForm,
+              formEl,
+              cancel: () => cancelled2 = true
+            };
+            for (const event2 of formEvents.onUpdate) {
+              await event2(data3);
+            }
           }
-        } else {
-          if (options.applyAction) {
-            if (options.onError == "apply") {
-              await applyAction(result);
+        }
+        if (!cancelled2) {
+          if (result.type !== "error") {
+            if (result.type === "success" && options.invalidateAll) {
+              await invalidateAll();
+            }
+            if (options.applyAction) {
+              await applyAction();
             } else {
-              await applyAction({
-                type: "failure",
-                status: Math.floor(result.status || 500)
+              await Data_update(result);
+            }
+          } else {
+            if (options.applyAction) {
+              if (options.onError == "apply") {
+                await applyAction();
+              } else {
+                await applyAction({
+                  type: "failure",
+                  status: Math.floor(result.status || 500)
+                });
+              }
+            }
+            if (options.onError !== "apply") {
+              const data3 = { result, message };
+              for (const event2 of formEvents.onError) {
+                if (event2 !== "apply")
+                  await event2(data3);
+              }
+            }
+          }
+          if (options.flashMessage) {
+            if (result.type == "error" && options.flashMessage.onError) {
+              await options.flashMessage.onError({
+                result,
+                message: options.flashMessage.module.getFlash(page)
               });
-            }
-          }
-          if (options.onError !== "apply") {
-            const data3 = { result, message };
-            for (const event2 of formEvents.onError) {
-              if (event2 !== "apply")
-                await event2(data3);
+            } else if (result.type != "error") {
+              await options.flashMessage.module.updateFlash(page);
             }
           }
         }
-        if (options.flashMessage) {
-          if (result.type == "error" && options.flashMessage.onError) {
-            await options.flashMessage.onError({
-              result,
-              message: options.flashMessage.module.getFlash(page)
-            });
-          } else if (result.type != "error") {
-            await options.flashMessage.module.updateFlash(page);
-          }
-        }
-      } else {
-        if (options.flashMessage)
-          cancelFlash(options);
+      }
+      if (cancelled2 && options.flashMessage) {
+        cancelFlash(options);
       }
       htmlForm.completed(cancelled2);
     }
